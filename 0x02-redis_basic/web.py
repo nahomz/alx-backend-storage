@@ -1,54 +1,38 @@
 #!/usr/bin/env python3
-"""
-Module web
-"""
+'''A module with tools for request caching and tracking.
+'''
 import redis
 import requests
+from functools import wraps
 from typing import Callable
 
 
-_redis = redis.Redis()
+redis_store = redis.Redis()
+'''The module-level Redis instance.
+'''
 
 
-def count_access(func: Callable) -> Callable:
-    """
-    Counts the number of times
-    a url was accessed
-    """
-    def wrapper(*args, **kwargs):
-        """wrapper"""
-        key = "count:{}".format(args[0])
-        _redis.incr(key)
-        return func(*args, **kwargs)
-    return wrapper
+def data_cacher(method: Callable) -> Callable:
+    '''Caches the output of fetched data.
+    '''
+    @wraps(method)
+    def invoker(url) -> str:
+        '''The wrapper function for caching the output.
+        '''
+        redis_store.incr(f'count:{url}')
+        result = redis_store.get(f'result:{url}')
+        if result:
+            return result.decode('utf-8')
+        result = method(url)
+        redis_store.set(f'count:{url}', 0)
+        redis_store.setex(f'result:{url}', 10, result)
+        return result
+    return invoker
 
 
-def get_cache(func: Callable) -> Callable:
-    """
-    Counts the number of times
-    a url was accessed
-    """
-    def wrapper(*args, **kwargs):
-        """wrapper"""
-        key = "result:{}".format(args[0])
-        if _redis.exists(key):
-            data = _redis.get(key)
-            return data.decode('utf-8')
-        return func(*args, **kwargs)
-    return wrapper
-
-
-@get_cache
-@count_access
+@data_cacher
 def get_page(url: str) -> str:
-    """
-    Obtains the HTML content of a
-    particular URL and returns it
-    """
-    key = "result:{}".format(url)
-
-    response = requests.get(url)
-
-    _redis.set(key, response.text, ex=10)
-
-    return response.text
+    '''Returns the content of a URL after caching the request's response,
+    and tracking the request.
+    '''
+    return requests.get(url).text
